@@ -1,0 +1,5 @@
+{
+  "name": "AutoSub - AI Subtitle Generator",
+  "description": "Automatically generate SRT subtitle files from audio or video uploads using Gemini AI. Supports Indonesian and English with precise timestamps.",
+  "requestFramePermissions": []
+}
