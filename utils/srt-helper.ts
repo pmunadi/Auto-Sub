@@ -29,6 +29,15 @@ export const generateSrtString = (subtitles: SubtitleItem[]): string => {
 };
 
 /**
+ * Converts an array of subtitle items to a clean plain text transcript
+ */
+export const generateTxtString = (subtitles: SubtitleItem[]): string => {
+  return subtitles
+    .map((item) => item.text)
+    .join(' ');
+};
+
+/**
  * Triggers a file download in the browser
  */
 export const downloadFile = (content: string, filename: string) => {

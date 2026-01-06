@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { transcribeAndTranslateMedia } from './services/gemini';
 import { SubtitleItem, Language } from './types';
-import { generateSrtString, downloadFile, formatSrtTime } from './utils/srt-helper';
+import { generateSrtString, generateTxtString, downloadFile, formatSrtTime } from './utils/srt-helper';
 import { 
   FileAudio, 
   FileVideo, 
@@ -14,15 +14,18 @@ import {
   RefreshCw,
   Languages,
   ArrowRightLeft,
-  FileText
+  FileText,
+  Youtube,
+  Link as LinkIcon
 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
-  const [targetLanguage, setTargetLanguage] = useState<Language>(Language.INDONESIAN);
+  const [targetLanguage, setTargetLanguage] = useState<Language>(Language.ENGLISH);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -30,11 +33,12 @@ const App: React.FC = () => {
 
   const validateAndSetFile = (selectedFile: File) => {
     if (selectedFile.size > MAX_FILE_SIZE) {
-      setError("Ukuran file melebihi 100MB. Silakan unggah file yang lebih kecil.");
+      setError("File size exceeds 100MB. Please upload a smaller file.");
       setFile(null);
       return;
     }
     setFile(selectedFile);
+    setYoutubeUrl(''); // Clear YouTube if file is uploaded
     setError(null);
     setSubtitles([]);
   };
@@ -42,6 +46,16 @@ const App: React.FC = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) validateAndSetFile(selectedFile);
+  };
+
+  const handleYoutubeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setYoutubeUrl(e.target.value);
+    if (e.target.value) {
+      setFile(null); // Clear file if YouTube URL is entered
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+    setSubtitles([]);
+    setError(null);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -66,7 +80,7 @@ const App: React.FC = () => {
       if (droppedFile.type.startsWith('audio/') || droppedFile.type.startsWith('video/')) {
         validateAndSetFile(droppedFile);
       } else {
-        setError("Format file tidak valid. Gunakan audio atau video.");
+        setError("Invalid file format. Please use audio or video files.");
       }
     }
   };
@@ -78,36 +92,55 @@ const App: React.FC = () => {
         const result = reader.result as string;
         resolve(result.split(',')[1]);
       };
-      reader.onerror = () => reject(new Error("Gagal membaca file"));
+      reader.onerror = () => reject(new Error("Failed to read file"));
       reader.readAsDataURL(file);
     });
   };
 
   const handleGenerate = async () => {
-    if (!file) return;
+    if (!file && !youtubeUrl) {
+      setError("Please provide a file or a YouTube link.");
+      return;
+    }
+    
     setLoading(true);
     setError(null);
 
     try {
-      const base64Data = await convertFileToBase64(file);
-      const response = await transcribeAndTranslateMedia(base64Data, file.type, targetLanguage);
+      let response;
+      if (file) {
+        const base64Data = await convertFileToBase64(file);
+        response = await transcribeAndTranslateMedia(targetLanguage, { base64: base64Data, mimeType: file.type });
+      } else {
+        response = await transcribeAndTranslateMedia(targetLanguage, undefined, youtubeUrl);
+      }
       setSubtitles(response.subtitles);
     } catch (err: any) {
-      setError(err.message || "Gagal menghasilkan subtitle. Silakan coba lagi.");
+      setError(err.message || "Failed to generate subtitles. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDownload = () => {
+  const handleDownloadSrt = () => {
     if (subtitles.length === 0) return;
     const srtContent = generateSrtString(subtitles);
-    const fileName = file ? `${file.name.split('.')[0]}_${targetLanguage}.srt` : 'subtitles.srt';
+    const prefix = file ? file.name.split('.')[0] : 'youtube_video';
+    const fileName = `${prefix}_${targetLanguage}.srt`;
     downloadFile(srtContent, fileName);
+  };
+
+  const handleDownloadTxt = () => {
+    if (subtitles.length === 0) return;
+    const txtContent = generateTxtString(subtitles);
+    const prefix = file ? file.name.split('.')[0] : 'youtube_video';
+    const fileName = `${prefix}_${targetLanguage}_transcript.txt`;
+    downloadFile(txtContent, fileName);
   };
 
   const reset = () => {
     setFile(null);
+    setYoutubeUrl('');
     setSubtitles([]);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -119,14 +152,14 @@ const App: React.FC = () => {
       <div className="w-full max-w-4xl text-center mb-10">
         <div className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-1.5 rounded-full text-xs font-bold mb-4 uppercase tracking-widest shadow-lg shadow-indigo-200">
           <ArrowRightLeft className="w-3.5 h-3.5" />
-          Transcribe & Translate
+          Transcription & Translation
         </div>
         <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight mb-4">
           Auto<span className="text-indigo-600">Sub</span> Expert
         </h1>
         <p className="text-lg text-slate-600 max-w-2xl mx-auto font-medium">
-          Hasilkan subtitle otomatis dalam Bahasa Indonesia atau Inggris. <br className="hidden md:block" />
-          AI akan otomatis mendeteksi apakah perlu transkripsi atau terjemahan.
+          Generate subtitles in English or Indonesian effortlessly. <br className="hidden md:block" />
+          Upload media or provide a YouTube link—AI handles the rest.
         </p>
       </div>
 
@@ -135,22 +168,20 @@ const App: React.FC = () => {
           <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
             
             {/* Left Section */}
-            <div className="flex-1 p-8 md:p-10 space-y-10">
+            <div className="flex-1 p-8 md:p-10 space-y-8">
               {/* Step 1: Upload */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-[10px]">01</span>
-                    Unggah File (Maks 100MB)
-                  </h2>
-                </div>
+                <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-[10px]">01</span>
+                  Upload Media (Max 100MB)
+                </h2>
                 
                 <div 
                   onClick={() => fileInputRef.current?.click()}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
-                  className={`relative group border-2 border-dashed rounded-[1.5rem] p-12 transition-all cursor-pointer flex flex-col items-center justify-center gap-5 min-h-[260px] ${
+                  className={`relative group border-2 border-dashed rounded-[1.5rem] p-10 transition-all cursor-pointer flex flex-col items-center justify-center gap-4 min-h-[220px] ${
                     isDragging 
                       ? 'border-indigo-600 bg-indigo-50 scale-[1.02] shadow-inner' 
                       : file 
@@ -167,72 +198,89 @@ const App: React.FC = () => {
                   />
                   {file ? (
                     <div className="flex flex-col items-center text-center animate-in zoom-in duration-300">
-                      <div className="bg-emerald-100 p-5 rounded-3xl mb-4 shadow-sm">
-                        {file.type.startsWith('video') ? <FileVideo className="w-12 h-12 text-emerald-600" /> : <FileAudio className="w-12 h-12 text-emerald-600" />}
+                      <div className="bg-emerald-100 p-4 rounded-3xl mb-3 shadow-sm">
+                        {file.type.startsWith('video') ? <FileVideo className="w-10 h-10 text-emerald-600" /> : <FileAudio className="w-10 h-10 text-emerald-600" />}
                       </div>
-                      <p className="font-bold text-slate-900 text-lg truncate max-w-[320px]">{file.name}</p>
-                      <p className="text-sm text-emerald-600 font-bold bg-white px-3 py-1 rounded-full border border-emerald-100 mt-2">
+                      <p className="font-bold text-slate-900 text-md truncate max-w-[280px]">{file.name}</p>
+                      <p className="text-xs text-emerald-600 font-bold bg-white px-3 py-1 rounded-full border border-emerald-100 mt-2">
                         {(file.size / (1024 * 1024)).toFixed(1)} MB
                       </p>
                     </div>
                   ) : (
                     <>
-                      <div className={`p-5 rounded-3xl bg-slate-50 transition-all ${isDragging ? 'bg-indigo-100 rotate-12' : 'group-hover:bg-indigo-50 group-hover:-rotate-3'}`}>
-                        <Upload className={`w-10 h-10 transition-colors ${isDragging ? 'text-indigo-600' : 'text-slate-400 group-hover:text-indigo-500'}`} />
+                      <div className={`p-4 rounded-3xl bg-slate-50 transition-all ${isDragging ? 'bg-indigo-100 rotate-12' : 'group-hover:bg-indigo-50 group-hover:-rotate-3'}`}>
+                        <Upload className={`w-8 h-8 transition-colors ${isDragging ? 'text-indigo-600' : 'text-slate-400 group-hover:text-indigo-500'}`} />
                       </div>
                       <div className="text-center">
-                        <p className="font-extrabold text-slate-700 text-lg">
-                          {isDragging ? 'Lepaskan File Sekarang' : 'Tarik & Lepas File di Sini'}
+                        <p className="font-extrabold text-slate-700">
+                          {isDragging ? 'Drop it here!' : 'Drag & Drop File Here'}
                         </p>
-                        <p className="text-sm text-slate-400 mt-2 font-medium">Mendukung MP4, MKV, MP3, WAV</p>
+                        <p className="text-xs text-slate-400 mt-1 font-medium">MP4, MKV, MP3, WAV</p>
                       </div>
                     </>
                   )}
                 </div>
               </div>
 
-              {/* Step 2: Result Language */}
+              {/* Step 2: YouTube Link */}
               <div className="space-y-4">
                 <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
                   <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-[10px]">02</span>
-                  Pilih Bahasa Subtitle (Hasil Akhir)
+                  OR Use YouTube Link
+                </h2>
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Youtube className={`w-5 h-5 transition-colors ${youtubeUrl ? 'text-red-500' : 'text-slate-400 group-focus-within:text-red-500'}`} />
+                  </div>
+                  <input 
+                    type="text"
+                    placeholder="Paste YouTube URL here (e.g. https://youtube.com/watch?...)"
+                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-slate-900 font-medium placeholder:text-slate-400 focus:outline-none focus:border-red-200 focus:bg-white transition-all shadow-sm"
+                    value={youtubeUrl}
+                    onChange={handleYoutubeChange}
+                  />
+                </div>
+              </div>
+
+              {/* Step 3: Target Language */}
+              <div className="space-y-4">
+                <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-[10px]">03</span>
+                  Target Subtitle Language
                 </h2>
                 <div className="grid grid-cols-2 gap-4">
                   <button 
-                    onClick={() => setTargetLanguage(Language.INDONESIAN)}
-                    className={`flex flex-col items-center justify-center gap-2 py-5 px-4 rounded-[1.25rem] border-2 font-bold transition-all ${
-                      targetLanguage === Language.INDONESIAN 
-                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md scale-[1.02]' 
-                        : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200'
-                    }`}
-                  >
-                    <span className="text-3xl">🇮🇩</span>
-                    <span>Bahasa Indonesia</span>
-                  </button>
-                  <button 
                     onClick={() => setTargetLanguage(Language.ENGLISH)}
-                    className={`flex flex-col items-center justify-center gap-2 py-5 px-4 rounded-[1.25rem] border-2 font-bold transition-all ${
+                    className={`flex flex-col items-center justify-center gap-2 py-4 px-4 rounded-[1.25rem] border-2 font-bold transition-all ${
                       targetLanguage === Language.ENGLISH 
                         ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md scale-[1.02]' 
                         : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200'
                     }`}
                   >
-                    <span className="text-3xl">🇺🇸</span>
+                    <span className="text-2xl">🇺🇸</span>
                     <span>English</span>
                   </button>
+                  <button 
+                    onClick={() => setTargetLanguage(Language.INDONESIAN)}
+                    className={`flex flex-col items-center justify-center gap-2 py-4 px-4 rounded-[1.25rem] border-2 font-bold transition-all ${
+                      targetLanguage === Language.INDONESIAN 
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md scale-[1.02]' 
+                        : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200'
+                    }`}
+                  >
+                    <span className="text-2xl">🇮🇩</span>
+                    <span>Indonesian</span>
+                  </button>
                 </div>
-                <p className="text-[11px] text-slate-400 italic text-center">
-                  *AI akan otomatis melakukan transkripsi atau terjemahan ke bahasa yang dipilih.
-                </p>
               </div>
 
-              {/* Action */}
-              <div className="pt-4 flex gap-4">
+              {/* Actions */}
+              <div className="pt-2 flex gap-4">
                 <button
-                  disabled={!file || loading}
+                  disabled={(!file && !youtubeUrl) || loading}
                   onClick={handleGenerate}
-                  className={`flex-1 flex items-center justify-center gap-3 py-5 px-6 rounded-2xl font-black text-white shadow-2xl transition-all ${
-                    !file || loading 
+                  className={`flex-1 flex items-center justify-center gap-3 py-4 px-6 rounded-2xl font-black text-white shadow-2xl transition-all ${
+                    (!file && !youtubeUrl) || loading 
                       ? 'bg-slate-200 cursor-not-allowed shadow-none' 
                       : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-300 active:scale-[0.97]'
                   }`}
@@ -240,62 +288,62 @@ const App: React.FC = () => {
                   {loading ? (
                     <>
                       <Loader2 className="w-6 h-6 animate-spin" />
-                      Memproses AI...
+                      AI Processing...
                     </>
                   ) : (
                     <>
                       <FileText className="w-5 h-5" />
-                      Proses Subtitle
+                      Generate Subtitles
                     </>
                   )}
                 </button>
-                {(file || subtitles.length > 0) && (
+                {(file || youtubeUrl || subtitles.length > 0) && (
                   <button 
                     onClick={reset}
                     disabled={loading}
-                    className="p-5 rounded-2xl border-2 border-slate-100 text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-red-100 transition-all"
-                    title="Mulai Ulang"
+                    className="p-4 rounded-2xl border-2 border-slate-100 text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-red-100 transition-all"
+                    title="Reset Everything"
                   >
-                    <RefreshCw className={`w-6 h-6 ${loading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
                   </button>
                 )}
               </div>
             </div>
 
             {/* Right Section: Preview */}
-            <div className="w-full lg:w-[420px] bg-slate-50/50 p-8 md:p-10 flex flex-col min-h-[600px]">
-              <div className="flex items-center justify-between mb-8">
+            <div className="w-full lg:w-[420px] bg-slate-50/50 p-8 flex flex-col min-h-[500px]">
+              <div className="flex items-center justify-between mb-6">
                 <h3 className="font-black text-slate-900 flex items-center gap-3">
-                  Preview Subtitle
+                  Subtitle Preview
                   {subtitles.length > 0 && (
                     <span className="bg-indigo-600 text-white text-[11px] px-2.5 py-1 rounded-full font-black">
-                      {subtitles.length} Baris
+                      {subtitles.length} Lines
                     </span>
                   )}
                 </h3>
               </div>
               
-              <div className="flex-1 overflow-y-auto max-h-[500px] space-y-4 pr-2 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto max-h-[480px] space-y-4 pr-2 custom-scrollbar">
                 {subtitles.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center px-6">
                     {loading ? (
                       <div className="flex flex-col items-center">
                         <div className="relative mb-6">
-                          <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center animate-pulse">
-                            <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
+                          <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center animate-pulse">
+                            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
                           </div>
                         </div>
-                        <p className="text-base font-bold text-indigo-700">Gemini sedang bekerja...</p>
+                        <p className="text-base font-bold text-indigo-700">AI is working...</p>
                         <p className="text-xs mt-2 font-medium text-slate-400 leading-relaxed">
-                          AI sedang mendengarkan audio dan menentukan apakah perlu transkripsi atau terjemahan.
+                          Gemini is analyzing the {youtubeUrl ? 'video link' : 'audio track'} and generating precise timestamps.
                         </p>
                       </div>
                     ) : (
                       <>
-                        <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mb-6">
-                          <Languages className="w-10 h-10 opacity-20" />
+                        <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-6">
+                          <LinkIcon className="w-8 h-8 opacity-20" />
                         </div>
-                        <p className="text-sm italic font-bold text-slate-400">Preview subtitle akan muncul di sini.</p>
+                        <p className="text-sm italic font-bold text-slate-400">Your subtitles will appear here.</p>
                       </>
                     )}
                   </div>
@@ -303,15 +351,15 @@ const App: React.FC = () => {
                   subtitles.map((sub, idx) => (
                     <div 
                       key={idx} 
-                      className="bg-white p-5 rounded-2xl border border-slate-200 text-sm shadow-sm hover:border-indigo-400 transition-all duration-300 animate-in fade-in slide-in-from-bottom-4" 
-                      style={{ animationDelay: `${idx * 30}ms` }}
+                      className="bg-white p-4 rounded-2xl border border-slate-200 text-sm shadow-sm hover:border-indigo-400 transition-all duration-300 animate-in fade-in slide-in-from-bottom-4" 
+                      style={{ animationDelay: `${idx * 20}ms` }}
                     >
-                      <div className="flex items-center gap-3 mb-3">
-                        <span className="text-[10px] font-black px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md">
                           {formatSrtTime(sub.start)}
                         </span>
-                        <div className="h-[2px] flex-1 bg-slate-50"></div>
-                        <span className="text-[10px] font-black px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg">
+                        <div className="h-[1px] flex-1 bg-slate-50"></div>
+                        <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md">
                           {formatSrtTime(sub.end)}
                         </span>
                       </div>
@@ -322,13 +370,22 @@ const App: React.FC = () => {
               </div>
 
               {subtitles.length > 0 && (
-                <button
-                  onClick={handleDownload}
-                  className="mt-10 w-full flex items-center justify-center gap-3 py-5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-[1.25rem] font-black shadow-xl shadow-emerald-100 transition-all active:scale-[0.98]"
-                >
-                  <Download className="w-6 h-6" />
-                  Unduh File .SRT
-                </button>
+                <div className="mt-6 flex flex-col gap-3">
+                  <button
+                    onClick={handleDownloadSrt}
+                    className="w-full flex items-center justify-center gap-3 py-4 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-[1.25rem] font-black shadow-xl shadow-emerald-100 transition-all active:scale-[0.98]"
+                  >
+                    <Download className="w-5 h-5" />
+                    Export .SRT
+                  </button>
+                  <button
+                    onClick={handleDownloadTxt}
+                    className="w-full flex items-center justify-center gap-3 py-4 px-6 bg-slate-700 hover:bg-slate-800 text-white rounded-[1.25rem] font-black shadow-xl shadow-slate-200 transition-all active:scale-[0.98]"
+                  >
+                    <FileText className="w-5 h-5" />
+                    Export Text (.txt)
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -336,45 +393,45 @@ const App: React.FC = () => {
 
         {/* Error Alert */}
         {error && (
-          <div className="mt-8 bg-red-50 border-2 border-red-100 text-red-700 px-8 py-5 rounded-[1.5rem] flex items-center gap-4 animate-in fade-in slide-in-from-top-6">
-            <div className="bg-red-100 p-3 rounded-2xl">
-              <AlertCircle className="w-6 h-6" />
+          <div className="mt-8 bg-red-50 border-2 border-red-100 text-red-700 px-6 py-4 rounded-2xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4">
+            <div className="bg-red-100 p-2 rounded-xl">
+              <AlertCircle className="w-5 h-5" />
             </div>
-            <p className="font-black">{error}</p>
+            <p className="font-black text-sm">{error}</p>
           </div>
         )}
 
         {/* Quick Guide */}
-        <div className="mt-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="mt-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { icon: <Upload className="text-indigo-600" />, title: 'Upload', desc: 'Seret video/audio Anda (maks 100MB).' },
-            { icon: <Languages className="text-emerald-600" />, title: 'Pilih Bahasa', desc: 'Ingin hasil Indo atau Inggris?' },
-            { icon: <CheckCircle2 className="text-orange-600" />, title: 'AI Otomatis', desc: 'AI mendeteksi & memproses subtitle.' },
-            { icon: <Download className="text-blue-600" />, title: 'Unduh SRT', desc: 'Subtitle siap digunakan segera.' },
+            { icon: <Upload className="text-indigo-600" />, title: 'Local Upload', desc: 'Drag & Drop your media files (up to 100MB).' },
+            { icon: <Youtube className="text-red-500" />, title: 'YouTube Link', desc: 'Paste a video URL and let AI do the work.' },
+            { icon: <Languages className="text-emerald-600" />, title: 'Translate', desc: 'Get results in English or Indonesian.' },
+            { icon: <Download className="text-orange-600" />, title: 'Multiple Formats', desc: 'Export as SRT subtitles or plain text transcript.' },
           ].map((step, i) => (
-            <div key={i} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
+            <div key={i} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all">
               <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center mb-4">{step.icon}</div>
-              <h4 className="font-black text-slate-900 mb-1">{step.title}</h4>
-              <p className="text-xs text-slate-500 font-medium leading-relaxed">{step.desc}</p>
+              <h4 className="font-black text-slate-900 text-sm mb-1">{step.title}</h4>
+              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">{step.desc}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <footer className="mt-16 text-slate-400 text-xs font-black uppercase tracking-widest">
-        Powered by Gemini AI 3 &bull; AutoSub Translator v2.0
+      <footer className="mt-16 text-slate-400 text-[10px] font-black uppercase tracking-widest">
+        Powered by Gemini AI 3 &bull; AutoSub Expert v2.5
       </footer>
 
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
-          width: 5px;
+          width: 4px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
           background: transparent;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
           background: #e2e8f0;
-          border-radius: 20px;
+          border-radius: 10px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
           background: #cbd5e1;
